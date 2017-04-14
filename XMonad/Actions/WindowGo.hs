@@ -21,6 +21,7 @@ module XMonad.Actions.WindowGo (
                  runOrRaiseNext,
                  raiseMaybe,
                  raiseNextMaybe,
+                 raiseNextMaybeCustomFocus,
 
                  raiseBrowser,
                  raiseEditor,
@@ -37,13 +38,14 @@ module XMonad.Actions.WindowGo (
 
 import Control.Monad
 import Data.Char (toLower)
+import qualified Data.List as L (nub,sortBy)
 import Data.Monoid
-import XMonad (Query(), X(), ManageHook, withWindowSet, runQuery, liftIO, ask)
+import XMonad (Query(), X(), ManageHook, WindowSet, withWindowSet, runQuery, liftIO, ask)
 import Graphics.X11 (Window)
 import XMonad.ManageHook
 import XMonad.Operations (windows)
 import XMonad.Prompt.Shell (getBrowser, getEditor)
-import qualified XMonad.StackSet as W (allWindows, peek, swapMaster, focusWindow)
+import qualified XMonad.StackSet as W (peek, swapMaster, focusWindow, workspaces, StackSet, Workspace, integrate', tag, stack)
 import XMonad.Util.Run (safeSpawnProg)
 {- $usage
 
@@ -65,12 +67,20 @@ appropriate one, or cover your bases by using instead something like:
 For detailed instructions on editing your key bindings, see
 "XMonad.Doc.Extending#Editing_key_bindings". -}
 
+-- | Get the list of workspaces sorted by their tag
+workspacesSorted :: Ord i => W.StackSet i l a s sd -> [W.Workspace i l a]
+workspacesSorted s = L.sortBy (\u t -> W.tag u `compare` W.tag t) $ W.workspaces s
+
+-- | Get a list of all windows in the 'StackSet' with an absolute ordering of workspaces
+allWindowsSorted :: Ord i => Eq a => W.StackSet i l a s sd -> [a]
+allWindowsSorted = L.nub . concatMap (W.integrate' . W.stack) . workspacesSorted
+
 -- | If windows that satisfy the query exist, apply the supplied
 -- function to them, otherwise run the action given as
 -- second parameter.
 ifWindows :: Query Bool -> ([Window] -> X ()) -> X () -> X ()
 ifWindows qry f el = withWindowSet $ \wins -> do
-  matches <- filterM (runQuery qry) $ W.allWindows wins
+  matches <- filterM (runQuery qry) $ allWindowsSorted wins
   case matches of
     [] -> el
     ws -> f ws
@@ -137,16 +147,21 @@ raiseNext = raiseNextMaybe $ return ()
      'raiseNextMaybe' is an alternative version that allows cycling
      through the matching windows. If the focused window matches the
      query the next matching window is raised. If no matches are found
-     the function f is executed.
--}
-
+     the function f is executed. -}
 raiseNextMaybe :: X () -> Query Bool -> X ()
-raiseNextMaybe f qry = flip (ifWindows qry) f $ \ws -> do
+raiseNextMaybe = raiseNextMaybeCustomFocus W.focusWindow
+
+{- | See 'raiseMaybe' and 'raiseNextMaybe'.
+     In addition to all of the options offered by 'raiseNextMaybe'
+     'raiseNextMaybeCustomFocus' allows the user to supply the function that
+     should be used to shift the focus to any window that is found. -}
+raiseNextMaybeCustomFocus :: (Window -> WindowSet -> WindowSet) -> X() -> Query Bool -> X()
+raiseNextMaybeCustomFocus focusFn f qry = flip (ifWindows qry) f $ \ws -> do
   foc <- withWindowSet $ return . W.peek
   case foc of
     Just w | w `elem` ws -> let (_:y:_) = dropWhile (/=w) $ cycle ws -- cannot fail to match
-                            in windows $ W.focusWindow y
-    _ -> windows . W.focusWindow . head $ ws
+                            in windows $ focusFn y
+    _ -> windows . focusFn . head $ ws
 
 -- | Given a function which gets us a String, we try to raise a window with that classname,
 --   or we then interpret that String as a executable name.
@@ -167,7 +182,8 @@ raiseAndDo :: X () -> Query Bool -> (Window -> X ()) -> X ()
 raiseAndDo f qry after = ifWindow qry (afterRaise `mappend` raiseHook) f
     where afterRaise = ask >>= (>> idHook) . liftX . after
 
-{- | If a window matching the second argument is found, the window is focused and the third argument is called;
+{- | If a window matching the second argument is found, the window is focused and
+     the third argument is called;
      otherwise, the first argument is called. -}
 runOrRaiseAndDo :: String -> Query Bool -> (Window -> X ()) -> X ()
 runOrRaiseAndDo = raiseAndDo . safeSpawnProg
@@ -182,7 +198,6 @@ raiseMaster raisef thatUserQuery = raiseAndDo raisef thatUserQuery (\_ -> window
 {- |  If the window is found the window is focused and set to master
       otherwise, action is run.
 
-      > runOrRaiseMaster "firefox" (className =? "Firefox"))
-  -}
+      > runOrRaiseMaster "firefox" (className =? "Firefox")) -}
 runOrRaiseMaster :: String -> Query Bool -> X ()
 runOrRaiseMaster run query = runOrRaiseAndDo run query (\_ -> windows W.swapMaster)

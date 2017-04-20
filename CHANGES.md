@@ -25,8 +25,10 @@
      Though the interface it offers is quite similar, this module has been
      almost completely rewritten. The new `XMonad.Actions.Minimize` contains
      several functions that allow interaction with minimization window state.
-     `XMonad.Hooks.RestoreMinimized` Has been completely deprecated, and its
-     functions have no effect.
+     If you are using this module, you must upgrade your configuration to import
+     `X.A.Minimize` and use `maximizeWindow` and `withLastMinimized` instead of
+     sending messages to `Minimized` layout. `XMonad.Hooks.RestoreMinimized` has
+     been completely deprecated, and its functions have no effect.
 
 ### New Modules
 
